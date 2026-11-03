@@ -1,6 +1,6 @@
-import { env } from 'cloudflare:test';
-import { exports } from 'cloudflare:workers';
+import { env, exports } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { deleteExpiredCredentials } from '../src/credentials';
 import type WebAuthnApi from '../src/index';
 import type { CreateAuthenticationOptionsInput, CreateRegistrationOptionsInput, Result } from '../src/index';
 import { VirtualAuthenticator } from './virtual-authenticator';
@@ -226,5 +226,35 @@ describe('relying parties', () => {
     expect(await api.createAuthenticationOptions({ sessionId: 's1', ...authenticationRequest, ...other })).toMatchObject({ ok: false });
     expect(await api.deleteCredential({ ...other, id: credentialId })).toMatchObject({ ok: false });
     expect(ok(await api.getCredentials({ rpId: 'example.com', username: 'alice' }))).toHaveLength(1);
+  });
+});
+
+describe('credential expiry', () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  async function expiresAt(id: string) {
+    return (await env.DB.prepare('SELECT expires_at FROM credentials WHERE id = ?').bind(id).first<number>('expires_at'))!;
+  }
+
+  it('keeps unused credentials for a day, and used ones for 30 days after each authentication', async () => {
+    const authenticator = new VirtualAuthenticator();
+    const { credentialId } = ok(await register('s1', authenticator));
+    expect(await expiresAt(credentialId)).toBeCloseTo(Date.now() + DAY_MS, -4);
+
+    const options = ok(await api.createAuthenticationOptions({ sessionId: 's1', ...authenticationRequest }));
+    const response = await authenticator.authenticate(options);
+    ok(await api.verifyAuthenticationResponse({ ...rp, sessionId: 's1', response }));
+    expect(await expiresAt(credentialId)).toBeCloseTo(Date.now() + 30 * DAY_MS, -4);
+  });
+
+  it('deletes only expired credentials', async () => {
+    const { credentialId: expired } = ok(await register('s1', new VirtualAuthenticator()));
+    const { credentialId: current } = ok(await register('s1', new VirtualAuthenticator()));
+    await env.DB.prepare('UPDATE credentials SET expires_at = ? WHERE id = ?').bind(Date.now() - 1, expired).run();
+
+    await deleteExpiredCredentials(env.DB);
+
+    const remaining = ok(await api.getCredentials({ rpId: 'example.com', username: 'alice' }));
+    expect(remaining.map((cred) => cred.id)).toEqual([current]);
   });
 });

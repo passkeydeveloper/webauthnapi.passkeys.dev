@@ -55,4 +55,4 @@ Expected failures, such as invalid input or a response that doesn't verify, are 
 
 ## Deploying
 
-The `d1_databases` entry in `wrangler.jsonc` has a placeholder `database_id`; create a database with `wrangler d1 create` before deploying. Credentials are deleted 24 hours after they were last used, by an hourly cron trigger.
+The `d1_databases` entry in `wrangler.jsonc` has a placeholder `database_id`; create a database with `wrangler d1 create` before deploying. Credentials are deleted 24 hours after registration if they're never used, or 30 days after the last authentication they were used for, by an hourly cron trigger.

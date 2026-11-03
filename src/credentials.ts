@@ -1,3 +1,11 @@
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** How long a credential is kept after registration if it's never used to authenticate */
+const REGISTERED_CREDENTIAL_LIFETIME_MS = DAY_MS;
+
+/** How long a credential is kept after each authentication it's used for */
+const USED_CREDENTIAL_LIFETIME_MS = 30 * DAY_MS;
+
 export interface StoredCredential {
   id: string;
   rpId: string;
@@ -44,8 +52,8 @@ export async function storeCredential(db: D1Database, cred: StoredCredential): P
   await db
     .prepare(
       `INSERT INTO credentials (id, rp_id, username, public_key, sign_count, is_discoverable, device_type,
-         backed_up, transports, aaguid, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         backed_up, transports, aaguid, created_at, updated_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       cred.id,
@@ -60,6 +68,7 @@ export async function storeCredential(db: D1Database, cred: StoredCredential): P
       cred.aaguid,
       now,
       now,
+      now + REGISTERED_CREDENTIAL_LIFETIME_MS,
     )
     .run();
 }
@@ -81,10 +90,12 @@ export async function getCredentialsByUsername(
   return results.map(fromRow);
 }
 
+/** Record a successful authentication, which also extends how long the credential is kept */
 export async function updateSignCount(db: D1Database, id: string, signCount: number): Promise<void> {
+  const now = Date.now();
   await db
-    .prepare('UPDATE credentials SET sign_count = ?, updated_at = ? WHERE id = ?')
-    .bind(signCount, Date.now(), id)
+    .prepare('UPDATE credentials SET sign_count = ?, updated_at = ?, expires_at = ? WHERE id = ?')
+    .bind(signCount, now, now + USED_CREDENTIAL_LIFETIME_MS, id)
     .run();
 }
 
@@ -96,7 +107,6 @@ export async function deleteCredential(db: D1Database, rpId: string, id: string,
   return result.meta.changes > 0;
 }
 
-/** Credentials are only kept around for a day, same as the Redis TTL on webauthn.io */
-export async function deleteExpiredCredentials(db: D1Database, olderThanMs: number): Promise<void> {
-  await db.prepare('DELETE FROM credentials WHERE updated_at < ?').bind(Date.now() - olderThanMs).run();
+export async function deleteExpiredCredentials(db: D1Database): Promise<void> {
+  await db.prepare('DELETE FROM credentials WHERE expires_at < ?').bind(Date.now()).run();
 }

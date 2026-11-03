@@ -45,7 +45,6 @@ import {
 
 export { ChallengeStore };
 
-const CREDENTIAL_LIFETIME_MS = 24 * 60 * 60 * 1000;
 export type * from './schemas';
 
 /** An expected failure, such as invalid input or a response that doesn't verify */
@@ -211,7 +210,7 @@ export default class WebAuthnApi extends WorkerEntrypoint<Env> {
   }
 
   async scheduled(): Promise<void> {
-    await deleteExpiredCredentials(this.env.DB, CREDENTIAL_LIFETIME_MS);
+    await deleteExpiredCredentials(this.env.DB);
   }
 
   #challenges(key: string) {
