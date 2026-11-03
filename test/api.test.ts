@@ -1,6 +1,7 @@
+import { runInDurableObject } from 'cloudflare:test';
 import { env, exports } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { deleteExpiredCredentials } from '../src/credentials';
+import { MAX_CREDENTIALS_PER_USERNAME, deleteExpiredCredentials, storeCredential } from '../src/credentials';
 import type { CreateAuthenticationOptionsInput, CreateRegistrationOptionsInput, Result } from '../src/index';
 import { VirtualAuthenticator } from './virtual-authenticator';
 
@@ -255,5 +256,57 @@ describe('credential expiry', () => {
 
     const remaining = ok(await api.getCredentials({ rpId: 'example.com', username: 'alice' }));
     expect(remaining.map((cred) => cred.id)).toEqual([current]);
+  });
+});
+
+describe('registration limits and checks', () => {
+  /** Store placeholder credentials for alice directly, to reach the per-username limit quickly */
+  async function storePlaceholders(from: number, to: number) {
+    for (let i = from; i < to; i++) {
+      await storeCredential(env.DB, {
+        id: `placeholder-${i}`,
+        rpId: 'example.com',
+        username: 'alice',
+        publicKey: '',
+        signCount: 0,
+        isDiscoverable: null,
+        deviceType: 'singleDevice',
+        backedUp: false,
+        transports: null,
+        aaguid: '00000000-0000-0000-0000-000000000000',
+      });
+    }
+  }
+
+  const tooMany = { ok: false, error: `That username already has the maximum of ${MAX_CREDENTIALS_PER_USERNAME} credentials` };
+
+  it('refuses registration options once a username has the maximum number of credentials', async () => {
+    await storePlaceholders(0, MAX_CREDENTIALS_PER_USERNAME);
+    expect(await api.createRegistrationOptions({ sessionId: 's1', ...registrationRequest })).toEqual(tooMany);
+  });
+
+  it('refuses to store a credential that would go over the maximum', async () => {
+    await storePlaceholders(0, MAX_CREDENTIALS_PER_USERNAME - 1);
+    const options = ok(await api.createRegistrationOptions({ sessionId: 's1', ...registrationRequest }));
+    await storePlaceholders(MAX_CREDENTIALS_PER_USERNAME - 1, MAX_CREDENTIALS_PER_USERNAME);
+
+    const response = await new VirtualAuthenticator().register(options);
+    expect(await api.verifyRegistrationResponse({ ...rp, sessionId: 's1', username: 'alice', response })).toEqual(tooMany);
+  });
+
+  it('reports a credential ID that is already registered', async () => {
+    const authenticator = new VirtualAuthenticator();
+    ok(await register('s1', authenticator));
+    expect(await register('s1', authenticator)).toEqual({ ok: false, error: 'Credential already registered' });
+  });
+});
+
+describe('challenge store', () => {
+  it('does not hand out a challenge past its TTL, even if the alarm has not run yet', async () => {
+    const store = env.CHALLENGES.getByName('expiry-test');
+    await store.put({ challenge: 'abc' }, 60_000);
+    await runInDurableObject(store, (_, state) => state.storage.put('expiresAt', Date.now() - 1));
+
+    expect(await store.take()).toBeUndefined();
   });
 });
