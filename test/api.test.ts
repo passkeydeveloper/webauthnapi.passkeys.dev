@@ -5,7 +5,12 @@ import type WebAuthnApi from '../src/index';
 import type { AuthenticationOptionsInput, RegistrationOptionsInput, Result } from '../src/index';
 import { VirtualAuthenticator } from './virtual-authenticator';
 
+/** The relying party for verification calls; `https://other.example` checks multiple origins */
+const rp = { rpId: 'example.com', expectedOrigins: ['https://example.com', 'https://other.example'] };
+
 const registrationRequest: Omit<RegistrationOptionsInput, 'sessionId'> = {
+  rpId: 'example.com',
+  rpName: 'Example',
   username: 'alice',
   userVerification: 'preferred',
   attestation: 'none',
@@ -15,7 +20,11 @@ const registrationRequest: Omit<RegistrationOptionsInput, 'sessionId'> = {
   hints: [],
 };
 
-const authenticationRequest: Omit<AuthenticationOptionsInput, 'sessionId'> = { userVerification: 'preferred', hints: [] };
+const authenticationRequest: Omit<AuthenticationOptionsInput, 'sessionId'> = {
+  rpId: 'example.com',
+  userVerification: 'preferred',
+  hints: [],
+};
 
 const api = exports.default as unknown as Service<WebAuthnApi>;
 
@@ -28,7 +37,7 @@ function ok<T>(result: Result<T>): T {
 async function register(sessionId: string, authenticator: VirtualAuthenticator, overrides = {}, registrationOptions = {}) {
   const options = ok(await api.registrationOptions({ sessionId, ...registrationRequest, ...overrides }));
   const response = await authenticator.register(options, registrationOptions);
-  return api.registrationVerification({ sessionId, username: 'alice', response });
+  return api.registrationVerification({ ...rp, sessionId, username: 'alice', response });
 }
 
 beforeEach(async () => {
@@ -85,8 +94,8 @@ describe('registration', () => {
     const options = ok(await api.registrationOptions({ sessionId: 's1', ...registrationRequest }));
     const response = await new VirtualAuthenticator().register(options);
 
-    const first = await api.registrationVerification({ sessionId: 's1', username: 'alice', response });
-    const replay = await api.registrationVerification({ sessionId: 's1', username: 'alice', response });
+    const first = await api.registrationVerification({ ...rp, sessionId: 's1', username: 'alice', response });
+    const replay = await api.registrationVerification({ ...rp, sessionId: 's1', username: 'alice', response });
     expect(first.ok).toBe(true);
     expect(replay.ok).toBe(false);
   });
@@ -94,7 +103,7 @@ describe('registration', () => {
   it('rejects a wrong origin', async () => {
     const options = ok(await api.registrationOptions({ sessionId: 's1', ...registrationRequest }));
     const response = await new VirtualAuthenticator('example.com', 'https://evil.example').register(options);
-    const result = await api.registrationVerification({ sessionId: 's1', username: 'alice', response });
+    const result = await api.registrationVerification({ ...rp, sessionId: 's1', username: 'alice', response });
     expect(result.ok).toBe(false);
   });
 });
@@ -108,10 +117,10 @@ describe('authentication', () => {
     expect(options.allowCredentials).toHaveLength(1);
 
     const response = await authenticator.authenticate(options);
-    const result = await api.authenticationVerification({ sessionId: 's1', username: 'alice', response });
+    const result = await api.authenticationVerification({ ...rp, sessionId: 's1', username: 'alice', response });
     expect(result).toEqual({ ok: true, value: { username: 'alice', credentialId } });
 
-    const [credential] = ok(await api.credentials({ username: 'alice' }));
+    const [credential] = ok(await api.credentials({ rpId: 'example.com', username: 'alice' }));
     expect(credential).toMatchObject({ signCount: 1, isDiscoverable: true });
   });
 
@@ -123,7 +132,7 @@ describe('authentication', () => {
     expect(options.allowCredentials).toEqual([]);
 
     const response = await authenticator.authenticate(options);
-    const result = await api.authenticationVerification({ sessionId: 's1', response });
+    const result = await api.authenticationVerification({ ...rp, sessionId: 's1', response });
     expect(result).toMatchObject({ ok: true, value: { username: 'alice' } });
   });
 
@@ -135,7 +144,7 @@ describe('authentication', () => {
     await register('s1', authenticator);
     const options = ok(await api.authenticationOptions({ sessionId: 's1', ...authenticationRequest }));
     const response = await authenticator.authenticate(options);
-    const result = await api.authenticationVerification({ sessionId: 's1', username: 'bob', response });
+    const result = await api.authenticationVerification({ ...rp, sessionId: 's1', username: 'bob', response });
     expect(result).toMatchObject({ ok: false, error: 'Credential does not belong to user' });
   });
 
@@ -145,7 +154,7 @@ describe('authentication', () => {
 
     const options = ok(await api.authenticationOptions({ sessionId: 's1', ...authenticationRequest }));
     const response = await authenticator.authenticate(options);
-    const result = await api.authenticationVerification({ sessionId: 's2', response });
+    const result = await api.authenticationVerification({ ...rp, sessionId: 's2', response });
     expect(result.ok).toBe(false);
   });
 });
@@ -154,16 +163,16 @@ describe('credentials', () => {
   it('only deletes credentials belonging to the given user', async () => {
     const { credentialId } = ok(await register('s1', new VirtualAuthenticator()));
 
-    expect(await api.deleteCredential({ username: 'bob', id: credentialId })).toMatchObject({ ok: false });
-    expect(await api.deleteCredential({ username: 'alice', id: credentialId })).toEqual({ ok: true, value: { deleted: true } });
-    expect(ok(await api.credentials({ username: 'alice' }))).toEqual([]);
+    expect(await api.deleteCredential({ rpId: 'example.com', username: 'bob', id: credentialId })).toMatchObject({ ok: false });
+    expect(await api.deleteCredential({ rpId: 'example.com', username: 'alice', id: credentialId })).toEqual({ ok: true, value: { deleted: true } });
+    expect(ok(await api.credentials({ rpId: 'example.com', username: 'alice' }))).toEqual([]);
   });
 });
 
 describe('credential details', () => {
   async function credentialFrom(authenticator: VirtualAuthenticator, registrationOptions = {}) {
     ok(await register('s1', authenticator, {}, registrationOptions));
-    return ok(await api.credentials({ username: 'alice' }))[0];
+    return ok(await api.credentials({ rpId: 'example.com', username: 'alice' }))[0];
   }
 
   it('describes the public key', async () => {
@@ -189,7 +198,33 @@ describe('origins', () => {
   it('accepts ceremonies from any expected origin', async () => {
     const options = ok(await api.registrationOptions({ sessionId: 's1', ...registrationRequest }));
     const response = await new VirtualAuthenticator('example.com', 'https://other.example').register(options);
-    const result = await api.registrationVerification({ sessionId: 's1', username: 'alice', response });
+    const result = await api.registrationVerification({ ...rp, sessionId: 's1', username: 'alice', response });
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('relying parties', () => {
+  it('rejects RP IDs and expected origins that are not a domain and origins', async () => {
+    const options = await api.registrationOptions({ sessionId: 's1', ...registrationRequest, rpId: 'https://example.com' });
+    expect(options).toMatchObject({ ok: false, fieldErrors: { rpId: expect.any(Array) } });
+
+    const verification = await api.registrationVerification({
+      ...rp,
+      expectedOrigins: ['https://example.com/'],
+      sessionId: 's1',
+      username: 'alice',
+      response: {} as never,
+    });
+    expect(verification).toMatchObject({ ok: false, fieldErrors: { 'expectedOrigins.0': expect.any(Array) } });
+  });
+
+  it('keeps credentials separate per RP ID', async () => {
+    const { credentialId } = ok(await register('s1', new VirtualAuthenticator()));
+    const other = { rpId: 'other.example', username: 'alice' };
+
+    expect(ok(await api.credentials(other))).toEqual([]);
+    expect(await api.authenticationOptions({ sessionId: 's1', ...authenticationRequest, ...other })).toMatchObject({ ok: false });
+    expect(await api.deleteCredential({ ...other, id: credentialId })).toMatchObject({ ok: false });
+    expect(ok(await api.credentials({ rpId: 'example.com', username: 'alice' }))).toHaveLength(1);
   });
 });

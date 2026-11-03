@@ -18,10 +18,5 @@
     }
   ],
   "triggers": { "crons": ["0 * * * *"] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ChallengeStore"] }],
-  "vars": {
-    "RP_ID": "localhost",
-    "RP_NAME": "tools.passkeys.dev",
-    "EXPECTED_ORIGINS": "http://localhost:8787,http://localhost:8080"
-  }
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ChallengeStore"] }]
 }

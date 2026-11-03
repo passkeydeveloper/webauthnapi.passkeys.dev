@@ -13,7 +13,6 @@ import type {
 } from '@simplewebauthn/server';
 import { COSE_ALG_IDS, supportedAlgorithms } from './algorithms';
 import type { StoredCredential } from './credentials';
-import type { Env } from './env';
 import type { AuthenticationOptionsRequest, RegistrationOptionsRequest } from './schemas';
 
 /** Spec default when `pubKeyCredParams` is empty: browsers fall back to ES256 and RS256 */
@@ -26,12 +25,10 @@ export const CHALLENGE_TTL_MS = TIMEOUT_MS * 2;
 
 export class UnsupportedAlgorithmError extends Error {}
 
-export function parseOrigins(value: string | undefined): string[] {
-  return (value ?? '').split(',').map((origin) => origin.trim()).filter(Boolean);
-}
-
-export function expectedOrigins(env: Env): string[] {
-  return parseOrigins(env.EXPECTED_ORIGINS);
+/** The relying party a response must have been created for */
+export interface ExpectedRelyingParty {
+  rpId: string;
+  expectedOrigins: string[];
 }
 
 export interface StoredRegistrationOptions {
@@ -42,7 +39,6 @@ export interface StoredRegistrationOptions {
 }
 
 export async function buildRegistrationOptions(
-  env: Env,
   req: RegistrationOptionsRequest,
   existing: StoredCredential[],
 ): Promise<{ options: PublicKeyCredentialCreationOptionsJSON; stored: StoredRegistrationOptions }> {
@@ -57,8 +53,8 @@ export async function buildRegistrationOptions(
   const algorithmIDs = req.algorithms.map((alg) => COSE_ALG_IDS[alg]);
 
   const options = await generateRegistrationOptions({
-    rpID: env.RP_ID,
-    rpName: env.RP_NAME,
+    rpID: req.rpId,
+    rpName: req.rpName,
     userName: req.username,
     userID: new Uint8Array(new TextEncoder().encode(`passkeysdev-${req.username}`)),
     timeout: TIMEOUT_MS,
@@ -94,7 +90,7 @@ export async function buildRegistrationOptions(
 }
 
 export async function verifyRegistration(
-  env: Env,
+  rp: ExpectedRelyingParty,
   response: RegistrationResponseJSON,
   username: string,
   stored: StoredRegistrationOptions,
@@ -102,8 +98,8 @@ export async function verifyRegistration(
   const verification = await verifyRegistrationResponse({
     response,
     expectedChallenge: stored.challenge,
-    expectedOrigin: expectedOrigins(env),
-    expectedRPID: env.RP_ID,
+    expectedOrigin: rp.expectedOrigins,
+    expectedRPID: rp.rpId,
     requireUserVerification: stored.requireUserVerification,
     supportedAlgorithmIDs: stored.algorithmIDs,
   });
@@ -125,6 +121,7 @@ export async function verifyRegistration(
 
   return {
     id: credential.id,
+    rpId: rp.rpId,
     username,
     publicKey: isoBase64URL.fromBuffer(credential.publicKey),
     signCount: credential.counter,
@@ -142,12 +139,11 @@ export interface StoredAuthenticationOptions {
 }
 
 export async function buildAuthenticationOptions(
-  env: Env,
   req: AuthenticationOptionsRequest,
   existing: StoredCredential[],
 ): Promise<{ options: PublicKeyCredentialRequestOptionsJSON; stored: StoredAuthenticationOptions }> {
   const options = await generateAuthenticationOptions({
-    rpID: env.RP_ID,
+    rpID: req.rpId,
     timeout: TIMEOUT_MS,
     userVerification: req.userVerification,
     allowCredentials: existing.slice(-64).map((cred) => ({
@@ -170,7 +166,7 @@ export async function buildAuthenticationOptions(
 }
 
 export async function verifyAuthentication(
-  env: Env,
+  rp: ExpectedRelyingParty,
   response: AuthenticationResponseJSON,
   credential: StoredCredential,
   stored: StoredAuthenticationOptions,
@@ -178,8 +174,8 @@ export async function verifyAuthentication(
   const verification = await verifyAuthenticationResponse({
     response,
     expectedChallenge: stored.challenge,
-    expectedOrigin: expectedOrigins(env),
-    expectedRPID: env.RP_ID,
+    expectedOrigin: rp.expectedOrigins,
+    expectedRPID: rp.rpId,
     requireUserVerification: stored.requireUserVerification,
     credential: {
       id: credential.id,

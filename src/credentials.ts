@@ -1,5 +1,6 @@
 export interface StoredCredential {
   id: string;
+  rpId: string;
   username: string;
   publicKey: string;
   signCount: number;
@@ -12,6 +13,7 @@ export interface StoredCredential {
 
 interface Row {
   id: string;
+  rp_id: string;
   username: string;
   public_key: string;
   sign_count: number;
@@ -25,6 +27,7 @@ interface Row {
 function fromRow(row: Row): StoredCredential {
   return {
     id: row.id,
+    rpId: row.rp_id,
     username: row.username,
     publicKey: row.public_key,
     signCount: row.sign_count,
@@ -40,12 +43,13 @@ export async function storeCredential(db: D1Database, cred: StoredCredential): P
   const now = Date.now();
   await db
     .prepare(
-      `INSERT INTO credentials (id, username, public_key, sign_count, is_discoverable, device_type,
+      `INSERT INTO credentials (id, rp_id, username, public_key, sign_count, is_discoverable, device_type,
          backed_up, transports, aaguid, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       cred.id,
+      cred.rpId,
       cred.username,
       cred.publicKey,
       cred.signCount,
@@ -60,15 +64,19 @@ export async function storeCredential(db: D1Database, cred: StoredCredential): P
     .run();
 }
 
-export async function getCredentialById(db: D1Database, id: string): Promise<StoredCredential | null> {
-  const row = await db.prepare('SELECT * FROM credentials WHERE id = ?').bind(id).first<Row>();
+export async function getCredentialById(db: D1Database, rpId: string, id: string): Promise<StoredCredential | null> {
+  const row = await db.prepare('SELECT * FROM credentials WHERE rp_id = ? AND id = ?').bind(rpId, id).first<Row>();
   return row ? fromRow(row) : null;
 }
 
-export async function getCredentialsByUsername(db: D1Database, username: string): Promise<StoredCredential[]> {
+export async function getCredentialsByUsername(
+  db: D1Database,
+  rpId: string,
+  username: string,
+): Promise<StoredCredential[]> {
   const { results } = await db
-    .prepare('SELECT * FROM credentials WHERE username = ? ORDER BY created_at')
-    .bind(username)
+    .prepare('SELECT * FROM credentials WHERE rp_id = ? AND username = ? ORDER BY created_at')
+    .bind(rpId, username)
     .all<Row>();
   return results.map(fromRow);
 }
@@ -80,10 +88,10 @@ export async function updateSignCount(db: D1Database, id: string, signCount: num
     .run();
 }
 
-export async function deleteCredential(db: D1Database, id: string, username: string): Promise<boolean> {
+export async function deleteCredential(db: D1Database, rpId: string, id: string, username: string): Promise<boolean> {
   const result = await db
-    .prepare('DELETE FROM credentials WHERE id = ? AND username = ?')
-    .bind(id, username)
+    .prepare('DELETE FROM credentials WHERE rp_id = ? AND id = ? AND username = ?')
+    .bind(rpId, id, username)
     .run();
   return result.meta.changes > 0;
 }

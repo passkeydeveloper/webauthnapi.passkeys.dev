@@ -80,6 +80,7 @@ function failed(err: unknown): Failure {
  * The WebAuthn API, called by other Workers through an RPC service binding. It has no public
  * routes, so the binding is the access control.
  *
+ * Every method takes the caller's relying party ID, and credentials are kept separately per RP ID.
  * Callers own their users' sessions: each ceremony takes the caller's session ID so its challenge
  * can only be completed by the browser that started it, and a successful authentication returns
  * the username for the caller to log in however it sees fit.
@@ -95,11 +96,11 @@ export default class WebAuthnApi extends WorkerEntrypoint<Env> {
     if (!parsed.success) return invalid(parsed.error);
     const req = parsed.data;
 
-    const existing = await getCredentialsByUsername(this.env.DB, req.username);
+    const existing = await getCredentialsByUsername(this.env.DB, req.rpId, req.username);
 
     let built;
     try {
-      built = await buildRegistrationOptions(this.env, req, existing);
+      built = await buildRegistrationOptions(req, existing);
     } catch (err) {
       if (err instanceof UnsupportedAlgorithmError) {
         return { ok: false, error: 'Invalid request', fieldErrors: { algorithms: [err.message] } };
@@ -107,7 +108,7 @@ export default class WebAuthnApi extends WorkerEntrypoint<Env> {
       throw err;
     }
 
-    await this.#challenges(`reg:${req.sessionId}:${req.username}`).put(built.stored, CHALLENGE_TTL_MS);
+    await this.#challenges(`reg:${req.rpId}:${req.sessionId}:${req.username}`).put(built.stored, CHALLENGE_TTL_MS);
 
     return { ok: true, value: built.options };
   }
@@ -117,13 +118,13 @@ export default class WebAuthnApi extends WorkerEntrypoint<Env> {
     if (!parsed.success) return invalid(parsed.error);
     const req = parsed.data;
 
-    const stored = await this.#challenges(`reg:${req.sessionId}:${req.username}`).take() as StoredRegistrationOptions | undefined;
+    const stored = await this.#challenges(`reg:${req.rpId}:${req.sessionId}:${req.username}`).take() as StoredRegistrationOptions | undefined;
     if (!stored) {
       return { ok: false, error: `no options for user ${req.username}` };
     }
 
     try {
-      const credential = await verifyRegistration(this.env, req.response as never, req.username, stored);
+      const credential = await verifyRegistration(req, req.response as never, req.username, stored);
       await storeCredential(this.env.DB, credential);
       return { ok: true, value: { credentialId: credential.id } };
     } catch (err) {
@@ -139,15 +140,15 @@ export default class WebAuthnApi extends WorkerEntrypoint<Env> {
 
     let existing: StoredCredential[] = [];
     if (req.username) {
-      existing = await getCredentialsByUsername(this.env.DB, req.username);
+      existing = await getCredentialsByUsername(this.env.DB, req.rpId, req.username);
       if (existing.length === 0) {
         return { ok: false, error: 'That username has no registered credentials' };
       }
     }
 
-    const { options, stored } = await buildAuthenticationOptions(this.env, req, existing);
+    const { options, stored } = await buildAuthenticationOptions(req, existing);
 
-    await this.#challenges(`auth:${req.sessionId}`).put(stored, CHALLENGE_TTL_MS);
+    await this.#challenges(`auth:${req.rpId}:${req.sessionId}`).put(stored, CHALLENGE_TTL_MS);
 
     return { ok: true, value: options };
   }
@@ -159,13 +160,13 @@ export default class WebAuthnApi extends WorkerEntrypoint<Env> {
     if (!parsed.success) return invalid(parsed.error);
     const req = parsed.data;
 
-    const stored = await this.#challenges(`auth:${req.sessionId}`).take() as StoredAuthenticationOptions | undefined;
+    const stored = await this.#challenges(`auth:${req.rpId}:${req.sessionId}`).take() as StoredAuthenticationOptions | undefined;
     if (!stored) {
       return { ok: false, error: 'no options for this session' };
     }
 
     try {
-      const credential = await getCredentialById(this.env.DB, req.response.id);
+      const credential = await getCredentialById(this.env.DB, req.rpId, req.response.id);
       if (!credential) {
         throw new Error('Unrecognized credential ID');
       }
@@ -173,7 +174,7 @@ export default class WebAuthnApi extends WorkerEntrypoint<Env> {
         throw new Error('Credential does not belong to user');
       }
 
-      const newCounter = await verifyAuthentication(this.env, req.response as never, credential, stored);
+      const newCounter = await verifyAuthentication(req, req.response as never, credential, stored);
       await updateSignCount(this.env.DB, credential.id, newCounter);
 
       return { ok: true, value: { username: credential.username, credentialId: credential.id } };
@@ -187,7 +188,7 @@ export default class WebAuthnApi extends WorkerEntrypoint<Env> {
     const parsed = credentialsRequest.safeParse(input);
     if (!parsed.success) return invalid(parsed.error);
 
-    const credentials = await getCredentialsByUsername(this.env.DB, parsed.data.username);
+    const credentials = await getCredentialsByUsername(this.env.DB, parsed.data.rpId, parsed.data.username);
     return {
       ok: true,
       value: credentials.map(({ publicKey, ...cred }) => ({
@@ -202,7 +203,7 @@ export default class WebAuthnApi extends WorkerEntrypoint<Env> {
     const parsed = credentialRequest.safeParse(input);
     if (!parsed.success) return invalid(parsed.error);
 
-    const deleted = await deleteCredential(this.env.DB, parsed.data.id, parsed.data.username);
+    const deleted = await deleteCredential(this.env.DB, parsed.data.rpId, parsed.data.id, parsed.data.username);
     if (!deleted) {
       return { ok: false, error: 'Unrecognized credential ID' };
     }

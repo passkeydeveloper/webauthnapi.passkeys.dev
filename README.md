@@ -21,8 +21,6 @@ npm run typecheck
 
 While `npm run dev` is running, a calling Worker's own `wrangler dev` connects its service binding to this one through Wrangler's local dev registry.
 
-The site is expected on `http://localhost:8080` (Eleventy's default) in development. That origin is accepted by the WebAuthn origin check via `EXPECTED_ORIGINS` in `wrangler.jsonc`.
-
 ## Calling the API
 
 Add a binding in the calling Worker's Wrangler config:
@@ -34,10 +32,12 @@ Add a binding in the calling Worker's Wrangler config:
 Then call methods on it, typed as `Service<WebAuthnApi>` with the default export of `src/index.ts`:
 
 ```ts
-const result = await env.WEBAUTHN.authenticationOptions({ sessionId, userVerification: 'preferred' });
+const result = await env.WEBAUTHN.authenticationOptions({ rpId: 'tools.passkeys.dev', sessionId, userVerification: 'preferred' });
 if (!result.ok) return Response.json(result, { status: 400 });
 return Response.json(result.value);
 ```
+
+Each caller passes its relying party configuration to the methods that need it: `rpId` to all of them, `rpName` to `registrationOptions`, and `expectedOrigins` (exact origins such as `https://tools.passkeys.dev`, which ceremonies may be completed from) to the two verification methods. Credentials are stored per RP ID, so callers with different RP IDs never see each other's credentials.
 
 The calling Worker owns its users' sessions. Every ceremony method takes the caller's `sessionId` (1–128 letters, digits, `_` or `-`, e.g. a UUID), which ties the challenge to the browser that started the ceremony. A successful `authenticationVerification` returns `{ username, credentialId }` for the caller to log the user in with.
 
@@ -46,18 +46,13 @@ Expected failures, such as invalid input or a response that doesn't verify, are 
 | Method | Description |
 | --- | --- |
 | `capabilities()` | `{ algorithms }` the runtime can verify (ML-DSA isn't supported by Workers yet) |
-| `registrationOptions({ sessionId, username, ... })` | Generate registration options |
-| `registrationVerification({ sessionId, username, response })` | Verify a registration response and store the credential |
-| `authenticationOptions({ sessionId, username?, ... })` | Generate authentication options (omit `username` for conditional UI) |
-| `authenticationVerification({ sessionId, username?, response })` | Verify an authentication response |
-| `credentials({ username })` | A user's credentials, with provider name and public key details |
-| `deleteCredential({ username, id })` | Delete one of a user's credentials |
+| `registrationOptions({ rpId, rpName, sessionId, username, ... })` | Generate registration options |
+| `registrationVerification({ rpId, expectedOrigins, sessionId, username, response })` | Verify a registration response and store the credential |
+| `authenticationOptions({ rpId, sessionId, username?, ... })` | Generate authentication options (omit `username` for conditional UI) |
+| `authenticationVerification({ rpId, expectedOrigins, sessionId, username?, response })` | Verify an authentication response |
+| `credentials({ rpId, username })` | A user's credentials, with provider name and public key details |
+| `deleteCredential({ rpId, username, id })` | Delete one of a user's credentials |
 
-## Configuration
-
-| Name | Purpose |
-| --- | --- |
-| `RP_ID`, `RP_NAME` | Relying party ID and display name |
-| `EXPECTED_ORIGINS` | Comma-separated origins that ceremonies may be completed from |
+## Deploying
 
 The `d1_databases` entry in `wrangler.jsonc` has a placeholder `database_id`; create a database with `wrangler d1 create` before deploying. Credentials are deleted 24 hours after they were last used, by an hourly cron trigger.
