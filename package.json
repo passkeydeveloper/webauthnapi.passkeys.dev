@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "npm run typecheck && npm test && wrangler deploy",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p test",
     "types": "wrangler types"
