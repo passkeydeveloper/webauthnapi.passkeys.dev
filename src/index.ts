@@ -4,6 +4,8 @@ import { getProviderName } from './aaguids';
 import { supportedAlgorithms, type Algorithm } from './algorithms';
 import { ChallengeStore } from './challenge-store';
 import {
+  MAX_CREDENTIALS_PER_USERNAME,
+  countCredentialsByUsername,
   deleteCredential,
   deleteExpiredCredentials,
   getCredentialById,
@@ -70,9 +72,18 @@ function invalid(error: ZodError): Failure {
   return { ok: false, error: 'Invalid request', fieldErrors };
 }
 
+/**
+ * A response that didn't verify. Only WebAuthn verification errors are reported this way; anything
+ * else (e.g. a database error) is thrown so the caller and the Worker's logs see a real exception.
+ */
 function failed(err: unknown): Failure {
   return { ok: false, error: (err as Error).message };
 }
+
+const tooManyCredentials: Failure = {
+  ok: false,
+  error: `That username already has the maximum of ${MAX_CREDENTIALS_PER_USERNAME} credentials`,
+};
 
 /**
  * The WebAuthn API, called by other Workers through an RPC service binding. It has no public
@@ -95,6 +106,9 @@ export default class WebAuthnApi extends WorkerEntrypoint<Env> {
     const req = parsed.data;
 
     const existing = await getCredentialsByUsername(this.env.DB, req.rpId, req.username);
+    if (existing.length >= MAX_CREDENTIALS_PER_USERNAME) {
+      return tooManyCredentials;
+    }
 
     let built;
     try {
@@ -121,13 +135,22 @@ export default class WebAuthnApi extends WorkerEntrypoint<Env> {
       return { ok: false, error: `no options for user ${req.username}` };
     }
 
+    let credential: StoredCredential;
     try {
-      const credential = await verifyRegistration(req, req.response as never, req.username, stored);
-      await storeCredential(this.env.DB, credential);
-      return { ok: true, value: { credentialId: credential.id } };
+      credential = await verifyRegistration(req, req.response as never, req.username, stored);
     } catch (err) {
       return failed(err);
     }
+
+    // Checked again since several registrations for the same username can be in flight at once
+    if ((await countCredentialsByUsername(this.env.DB, req.rpId, req.username)) >= MAX_CREDENTIALS_PER_USERNAME) {
+      return tooManyCredentials;
+    }
+    if (!(await storeCredential(this.env.DB, credential))) {
+      return { ok: false, error: 'Credential already registered' };
+    }
+
+    return { ok: true, value: { credentialId: credential.id } };
   }
 
   /** Omit `username` for conditional UI */
@@ -163,22 +186,23 @@ export default class WebAuthnApi extends WorkerEntrypoint<Env> {
       return { ok: false, error: 'no options for this session' };
     }
 
+    const credential = await getCredentialById(this.env.DB, req.rpId, req.response.id);
+    if (!credential) {
+      return { ok: false, error: 'Unrecognized credential ID' };
+    }
+    if (req.username && credential.username !== req.username) {
+      return { ok: false, error: 'Credential does not belong to user' };
+    }
+
+    let newCounter: number;
     try {
-      const credential = await getCredentialById(this.env.DB, req.rpId, req.response.id);
-      if (!credential) {
-        throw new Error('Unrecognized credential ID');
-      }
-      if (req.username && credential.username !== req.username) {
-        throw new Error('Credential does not belong to user');
-      }
-
-      const newCounter = await verifyAuthentication(req, req.response as never, credential, stored);
-      await updateSignCount(this.env.DB, credential.id, newCounter);
-
-      return { ok: true, value: { username: credential.username, credentialId: credential.id } };
+      newCounter = await verifyAuthentication(req, req.response as never, credential, stored);
     } catch (err) {
       return failed(err);
     }
+    await updateSignCount(this.env.DB, credential.id, newCounter);
+
+    return { ok: true, value: { username: credential.username, credentialId: credential.id } };
   }
 
   /** A user's credentials, with provider name and public key details */

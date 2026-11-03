@@ -6,6 +6,12 @@ const REGISTERED_CREDENTIAL_LIFETIME_MS = DAY_MS;
 /** How long a credential is kept after each authentication it's used for */
 const USED_CREDENTIAL_LIFETIME_MS = 30 * DAY_MS;
 
+/**
+ * Usernames are shared by anyone who types them, so this keeps one person from bloating the
+ * `excludeCredentials` of a common name for everyone else
+ */
+export const MAX_CREDENTIALS_PER_USERNAME = 25;
+
 export interface StoredCredential {
   id: string;
   rpId: string;
@@ -47,13 +53,15 @@ function fromRow(row: Row): StoredCredential {
   };
 }
 
-export async function storeCredential(db: D1Database, cred: StoredCredential): Promise<void> {
+/** Returns `false` if a credential with the same ID is already registered */
+export async function storeCredential(db: D1Database, cred: StoredCredential): Promise<boolean> {
   const now = Date.now();
-  await db
+  const result = await db
     .prepare(
       `INSERT INTO credentials (id, rp_id, username, public_key, sign_count, is_discoverable, device_type,
          backed_up, transports, aaguid, created_at, updated_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (id) DO NOTHING`,
     )
     .bind(
       cred.id,
@@ -71,6 +79,7 @@ export async function storeCredential(db: D1Database, cred: StoredCredential): P
       now + REGISTERED_CREDENTIAL_LIFETIME_MS,
     )
     .run();
+  return result.meta.changes > 0;
 }
 
 export async function getCredentialById(db: D1Database, rpId: string, id: string): Promise<StoredCredential | null> {
@@ -91,6 +100,14 @@ export async function getCredentialsByUsername(
 }
 
 /** Record a successful authentication, which also extends how long the credential is kept */
+export async function countCredentialsByUsername(db: D1Database, rpId: string, username: string): Promise<number> {
+  const count = await db
+    .prepare('SELECT COUNT(*) AS count FROM credentials WHERE rp_id = ? AND username = ?')
+    .bind(rpId, username)
+    .first<number>('count');
+  return count ?? 0;
+}
+
 export async function updateSignCount(db: D1Database, id: string, signCount: number): Promise<void> {
   const now = Date.now();
   await db
