@@ -1,6 +1,6 @@
 {
   "name": "webauthnapi-passkeys-dev",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "private": true,
   "description": "WebAuthn API for passkeys.dev",
   "type": "module",
