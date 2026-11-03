@@ -14,13 +14,8 @@
     {
       "binding": "DB",
       "database_name": "webauthnapi-passkeys-dev",
-      "database_id": "local-dev-placeholder",
+      "database_id": "5265d4b8-ba4c-4307-b483-18b7d250169b",
       "migrations_dir": "migrations"
-    },
-    {
-      "binding": "webauthnapi_passkeys_dev",
-      "database_name": "webauthnapi-passkeys-dev",
-      "database_id": "5265d4b8-ba4c-4307-b483-18b7d250169b"
     }
   ],
   "triggers": { "crons": ["0 * * * *"] },
