@@ -1,9 +1,9 @@
-import { SELF } from 'cloudflare:test';
+import { exports } from 'cloudflare:workers';
 import { expect, it } from 'vitest';
+import type WebAuthnApi from '../src/index';
 
 it('lists only algorithms the runtime supports', async () => {
-  const res = await SELF.fetch('http://example.com/api/v1/capabilities');
-  const { algorithms } = (await res.json()) as { algorithms: string[] };
+  const { algorithms } = await (exports.default as unknown as Service<WebAuthnApi>).capabilities();
 
   expect(algorithms).toEqual(expect.arrayContaining(['es256', 'rs256', 'ed25519']));
   // Workers has no ML-DSA in WebCrypto yet; this fails (and should be revisited) once it does

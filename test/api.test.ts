@@ -1,8 +1,11 @@
-import { SELF, env } from 'cloudflare:test';
+import { env } from 'cloudflare:test';
+import { exports } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it } from 'vitest';
+import type WebAuthnApi from '../src/index';
+import type { AuthenticationOptionsInput, RegistrationOptionsInput, Result } from '../src/index';
 import { VirtualAuthenticator } from './virtual-authenticator';
 
-const registrationRequest = {
+const registrationRequest: Omit<RegistrationOptionsInput, 'sessionId'> = {
   username: 'alice',
   userVerification: 'preferred',
   attestation: 'none',
@@ -12,29 +15,20 @@ const registrationRequest = {
   hints: [],
 };
 
-const authenticationRequest = { userVerification: 'preferred', hints: [] };
+const authenticationRequest: Omit<AuthenticationOptionsInput, 'sessionId'> = { userVerification: 'preferred', hints: [] };
 
-/** A fetch wrapper that keeps the session cookie like a browser would */
-function client() {
-  let cookie = '';
-  return async (path: string, init: { method?: string; body?: unknown } = {}) => {
-    const res = await SELF.fetch(`https://example.com/api/v1${path}`, {
-      method: init.method ?? (init.body ? 'POST' : 'GET'),
-      headers: { 'content-type': 'application/json', ...(cookie && { cookie }) },
-      body: init.body ? JSON.stringify(init.body) : undefined,
-    });
-    const setCookie = res.headers.get('set-cookie');
-    if (setCookie) cookie = setCookie.split(';')[0];
-    return { status: res.status, json: (await res.json()) as any };
-  };
+const api = exports.default as unknown as Service<WebAuthnApi>;
+
+/** Values from a successful result, failing the test otherwise */
+function ok<T>(result: Result<T>): T {
+  if (!result.ok) throw new Error(`Expected success, got ${JSON.stringify(result)}`);
+  return result.value;
 }
 
-async function register(api: ReturnType<typeof client>, authenticator: VirtualAuthenticator, overrides = {}) {
-  const { json: options } = await api('/registration/options', {
-    body: { ...registrationRequest, ...overrides },
-  });
-  const response = await authenticator.register(options);
-  return api('/registration/verification', { body: { username: 'alice', response } });
+async function register(sessionId: string, authenticator: VirtualAuthenticator, overrides = {}, registrationOptions = {}) {
+  const options = ok(await api.registrationOptions({ sessionId, ...registrationRequest, ...overrides }));
+  const response = await authenticator.register(options, registrationOptions);
+  return api.registrationVerification({ sessionId, username: 'alice', response });
 }
 
 beforeEach(async () => {
@@ -43,236 +37,159 @@ beforeEach(async () => {
 
 describe('registration', () => {
   it('generates options honoring the request', async () => {
-    const api = client();
-    const { status, json } = await api('/registration/options', {
-      body: {
-        ...registrationRequest,
-        algorithms: ['rs256', 'es256'],
-        attachment: 'platform',
-        hints: ['hybrid'],
-        discoverableCredential: 'required',
-      },
-    });
+    const options = ok(await api.registrationOptions({
+      sessionId: 's1',
+      ...registrationRequest,
+      algorithms: ['rs256', 'es256'],
+      attachment: 'platform',
+      hints: ['hybrid'],
+      discoverableCredential: 'required',
+    }));
 
-    expect(status).toBe(200);
-    expect(json.pubKeyCredParams.map((p: any) => p.alg)).toEqual([-257, -7]);
-    expect(json.authenticatorSelection).toMatchObject({
+    expect(options.pubKeyCredParams.map((p) => p.alg)).toEqual([-257, -7]);
+    expect(options.authenticatorSelection).toMatchObject({
       authenticatorAttachment: 'platform',
       residentKey: 'required',
     });
-    expect(json.hints).toEqual(['hybrid']);
-    expect(json.extensions).toEqual({ credProps: true });
+    expect(options.hints).toEqual(['hybrid']);
+    expect(options.extensions).toEqual({ credProps: true });
   });
 
   it('sends an empty pubKeyCredParams when no algorithms are selected', async () => {
-    const { json } = await client()('/registration/options', {
-      body: { ...registrationRequest, algorithms: [] },
-    });
-    expect(json.pubKeyCredParams).toEqual([]);
+    const options = ok(await api.registrationOptions({ sessionId: 's1', ...registrationRequest, algorithms: [] }));
+    expect(options.pubKeyCredParams).toEqual([]);
   });
 
   it('rejects invalid requests and algorithms the runtime cannot verify', async () => {
-    const api = client();
-    const invalid = await api('/registration/options', { body: { ...registrationRequest, username: '' } });
-    expect(invalid.status).toBe(400);
-    expect(invalid.json.username).toBeDefined();
+    const invalid = await api.registrationOptions({ sessionId: 's1', ...registrationRequest, username: '' });
+    expect(invalid).toMatchObject({ ok: false, fieldErrors: { username: expect.any(Array) } });
 
-    const pqc = await api('/registration/options', { body: { ...registrationRequest, algorithms: ['mldsa44'] } });
-    expect(pqc.status).toBe(400);
+    const pqc = await api.registrationOptions({ sessionId: 's1', ...registrationRequest, algorithms: ['mldsa44'] });
+    expect(pqc).toMatchObject({ ok: false, fieldErrors: { algorithms: expect.any(Array) } });
+  });
+
+  it('rejects session IDs that could collide in challenge store keys', async () => {
+    const result = await api.registrationOptions({ sessionId: 'a:b', ...registrationRequest });
+    expect(result).toMatchObject({ ok: false, fieldErrors: { sessionId: expect.any(Array) } });
   });
 
   it('registers a credential and excludes it from later registrations', async () => {
-    const api = client();
-    const authenticator = new VirtualAuthenticator();
-    const result = await register(api, authenticator);
-    expect(result).toMatchObject({ status: 200, json: { verified: true } });
+    const result = await register('s1', new VirtualAuthenticator());
+    expect(result).toMatchObject({ ok: true, value: { credentialId: expect.any(String) } });
 
-    const { json } = await api('/registration/options', { body: registrationRequest });
-    expect(json.excludeCredentials).toHaveLength(1);
+    const options = ok(await api.registrationOptions({ sessionId: 's1', ...registrationRequest }));
+    expect(options.excludeCredentials).toHaveLength(1);
   });
 
   it('only accepts a challenge once', async () => {
-    const api = client();
-    const authenticator = new VirtualAuthenticator();
-    const { json: options } = await api('/registration/options', { body: registrationRequest });
-    const response = await authenticator.register(options);
+    const options = ok(await api.registrationOptions({ sessionId: 's1', ...registrationRequest }));
+    const response = await new VirtualAuthenticator().register(options);
 
-    const first = await api('/registration/verification', { body: { username: 'alice', response } });
-    const replay = await api('/registration/verification', { body: { username: 'alice', response } });
-    expect(first.status).toBe(200);
-    expect(replay.status).toBe(400);
+    const first = await api.registrationVerification({ sessionId: 's1', username: 'alice', response });
+    const replay = await api.registrationVerification({ sessionId: 's1', username: 'alice', response });
+    expect(first.ok).toBe(true);
+    expect(replay.ok).toBe(false);
   });
 
   it('rejects a wrong origin', async () => {
-    const api = client();
-    const { json: options } = await api('/registration/options', { body: registrationRequest });
+    const options = ok(await api.registrationOptions({ sessionId: 's1', ...registrationRequest }));
     const response = await new VirtualAuthenticator('example.com', 'https://evil.example').register(options);
-    const result = await api('/registration/verification', { body: { username: 'alice', response } });
-    expect(result.status).toBe(400);
+    const result = await api.registrationVerification({ sessionId: 's1', username: 'alice', response });
+    expect(result.ok).toBe(false);
   });
 });
 
 describe('authentication', () => {
   it('logs in with a registered credential and updates the sign count', async () => {
-    const api = client();
     const authenticator = new VirtualAuthenticator();
-    await register(api, authenticator);
+    const { credentialId } = ok(await register('s1', authenticator));
 
-    const { json: options } = await api('/authentication/options', {
-      body: { ...authenticationRequest, username: 'alice' },
-    });
+    const options = ok(await api.authenticationOptions({ sessionId: 's1', ...authenticationRequest, username: 'alice' }));
     expect(options.allowCredentials).toHaveLength(1);
 
     const response = await authenticator.authenticate(options);
-    const result = await api('/authentication/verification', { body: { username: 'alice', response } });
-    expect(result).toMatchObject({ status: 200, json: { verified: true } });
+    const result = await api.authenticationVerification({ sessionId: 's1', username: 'alice', response });
+    expect(result).toEqual({ ok: true, value: { username: 'alice', credentialId } });
 
-    expect((await api('/session')).json.username).toBe('alice');
-    const { json } = await api('/credentials');
-    expect(json.credentials[0]).toMatchObject({ signCount: 1, isDiscoverable: true });
+    const [credential] = ok(await api.credentials({ username: 'alice' }));
+    expect(credential).toMatchObject({ signCount: 1, isDiscoverable: true });
   });
 
   it('supports username-less (conditional UI) authentication', async () => {
-    const api = client();
     const authenticator = new VirtualAuthenticator();
-    await register(api, authenticator);
+    await register('s1', authenticator);
 
-    const { json: options } = await api('/authentication/options', { body: authenticationRequest });
+    const options = ok(await api.authenticationOptions({ sessionId: 's1', ...authenticationRequest }));
     expect(options.allowCredentials).toEqual([]);
 
     const response = await authenticator.authenticate(options);
-    const result = await api('/authentication/verification', { body: { response } });
-    expect(result.status).toBe(200);
+    const result = await api.authenticationVerification({ sessionId: 's1', response });
+    expect(result).toMatchObject({ ok: true, value: { username: 'alice' } });
   });
 
   it('rejects unknown usernames and mismatched users', async () => {
-    const api = client();
-    const unknown = await api('/authentication/options', { body: { ...authenticationRequest, username: 'nobody' } });
-    expect(unknown.status).toBe(400);
+    const unknown = await api.authenticationOptions({ sessionId: 's1', ...authenticationRequest, username: 'nobody' });
+    expect(unknown.ok).toBe(false);
 
     const authenticator = new VirtualAuthenticator();
-    await register(api, authenticator);
-    const { json: options } = await api('/authentication/options', { body: authenticationRequest });
+    await register('s1', authenticator);
+    const options = ok(await api.authenticationOptions({ sessionId: 's1', ...authenticationRequest }));
     const response = await authenticator.authenticate(options);
-    const mismatch = await api('/authentication/verification', { body: { username: 'bob', response } });
-    expect(mismatch.status).toBe(400);
+    const result = await api.authenticationVerification({ sessionId: 's1', username: 'bob', response });
+    expect(result).toMatchObject({ ok: false, error: 'Credential does not belong to user' });
   });
 
   it('does not let a different session consume the challenge', async () => {
-    const api = client();
     const authenticator = new VirtualAuthenticator();
-    await register(api, authenticator);
+    await register('s1', authenticator);
 
-    const { json: options } = await api('/authentication/options', { body: authenticationRequest });
+    const options = ok(await api.authenticationOptions({ sessionId: 's1', ...authenticationRequest }));
     const response = await authenticator.authenticate(options);
-    const result = await client()('/authentication/verification', { body: { response } });
-    expect(result.status).toBe(400);
+    const result = await api.authenticationVerification({ sessionId: 's2', response });
+    expect(result.ok).toBe(false);
   });
 });
 
 describe('credentials', () => {
-  it('requires login, and only lets the owner delete', async () => {
-    const owner = client();
-    const authenticator = new VirtualAuthenticator();
-    await register(owner, authenticator);
-    const { json: options } = await owner('/authentication/options', { body: authenticationRequest });
-    await owner('/authentication/verification', { body: { response: await authenticator.authenticate(options) } });
+  it('only deletes credentials belonging to the given user', async () => {
+    const { credentialId } = ok(await register('s1', new VirtualAuthenticator()));
 
-    const id = (await owner('/credentials')).json.credentials[0].id;
-
-    expect((await client()('/credentials')).status).toBe(401);
-    expect((await client()(`/credentials/${id}`, { method: 'DELETE' })).status).toBe(401);
-
-    expect((await owner(`/credentials/${id}`, { method: 'DELETE' })).status).toBe(200);
-    expect((await owner('/credentials')).json.credentials).toEqual([]);
-  });
-
-  it('forgets the user on logout', async () => {
-    const api = client();
-    const authenticator = new VirtualAuthenticator();
-    await register(api, authenticator);
-    const { json: options } = await api('/authentication/options', { body: authenticationRequest });
-    await api('/authentication/verification', { body: { response: await authenticator.authenticate(options) } });
-    expect((await api('/session')).json.username).toBe('alice');
-
-    await api('/logout', { method: 'POST' });
-    expect((await client()('/session')).json.username).toBeNull();
+    expect(await api.deleteCredential({ username: 'bob', id: credentialId })).toMatchObject({ ok: false });
+    expect(await api.deleteCredential({ username: 'alice', id: credentialId })).toEqual({ ok: true, value: { deleted: true } });
+    expect(ok(await api.credentials({ username: 'alice' }))).toEqual([]);
   });
 });
 
 describe('credential details', () => {
-  async function loginWith(authenticator: VirtualAuthenticator, registrationOptions = {}) {
-    const api = client();
-    const { json: options } = await api('/registration/options', { body: registrationRequest });
-    const response = await authenticator.register(options, registrationOptions);
-    await api('/registration/verification', { body: { username: 'alice', response } });
-
-    const { json: authOptions } = await api('/authentication/options', { body: authenticationRequest });
-    await api('/authentication/verification', { body: { response: await authenticator.authenticate(authOptions) } });
-    return api;
+  async function credentialFrom(authenticator: VirtualAuthenticator, registrationOptions = {}) {
+    ok(await register('s1', authenticator, {}, registrationOptions));
+    return ok(await api.credentials({ username: 'alice' }))[0];
   }
 
   it('describes the public key', async () => {
-    const api = await loginWith(new VirtualAuthenticator());
-    const { json } = await api('/credentials');
-    expect(json.credentials[0].publicKey).toEqual({
+    const credential = await credentialFrom(new VirtualAuthenticator());
+    expect(credential.publicKey).toEqual({
       kty: { id: 2, name: 'EC2' },
       alg: { id: -7, name: 'ES256' },
     });
   });
 
   it('names synced credentials with an all-zero AAGUID as iCloud Keychain', async () => {
-    const api = await loginWith(new VirtualAuthenticator(), { synced: true });
-    const { json } = await api('/credentials');
-    expect(json.credentials[0]).toMatchObject({ deviceType: 'multiDevice', backedUp: true, providerName: 'iCloud Keychain' });
+    const credential = await credentialFrom(new VirtualAuthenticator(), { synced: true });
+    expect(credential).toMatchObject({ deviceType: 'multiDevice', backedUp: true, providerName: 'iCloud Keychain' });
   });
 
   it('has no provider name for unrecognized device-bound credentials', async () => {
-    const api = await loginWith(new VirtualAuthenticator());
-    const { json } = await api('/credentials');
-    expect(json.credentials[0]).toMatchObject({ deviceType: 'singleDevice', providerName: null });
+    const credential = await credentialFrom(new VirtualAuthenticator());
+    expect(credential).toMatchObject({ deviceType: 'singleDevice', providerName: null });
   });
 });
 
 describe('origins', () => {
   it('accepts ceremonies from any expected origin', async () => {
-    const api = client();
-    const { json: options } = await api('/registration/options', { body: registrationRequest });
+    const options = ok(await api.registrationOptions({ sessionId: 's1', ...registrationRequest }));
     const response = await new VirtualAuthenticator('example.com', 'https://other.example').register(options);
-    const result = await api('/registration/verification', { body: { username: 'alice', response } });
-    expect(result.status).toBe(200);
-  });
-});
-
-describe('unknown routes', () => {
-  it('returns a JSON 404', async () => {
-    const res = await SELF.fetch('https://example.com/does-not-exist');
-    expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ error: 'Not found' });
-  });
-});
-
-describe('CORS', () => {
-  const url = 'https://example.com/api/v1/registration/options';
-
-  it('answers preflights from allowed origins with credentials', async () => {
-    const res = await SELF.fetch(url, {
-      method: 'OPTIONS',
-      headers: {
-        origin: 'https://other.example',
-        'access-control-request-method': 'POST',
-        'access-control-request-headers': 'content-type',
-      },
-    });
-    expect(res.status).toBe(204);
-    expect(res.headers.get('access-control-allow-origin')).toBe('https://other.example');
-    expect(res.headers.get('access-control-allow-credentials')).toBe('true');
-  });
-
-  it('does not grant access to other origins', async () => {
-    const res = await SELF.fetch('https://example.com/api/v1/capabilities', {
-      headers: { origin: 'https://evil.example' },
-    });
-    expect(res.headers.get('access-control-allow-origin')).toBeNull();
+    const result = await api.registrationVerification({ sessionId: 's1', username: 'alice', response });
+    expect(result.ok).toBe(true);
   });
 });

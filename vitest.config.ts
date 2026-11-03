@@ -14,7 +14,6 @@ export default defineConfig(async () => {
           compatibilityDate: '2026-08-01',
           bindings: {
             TEST_MIGRATIONS: migrations,
-            SESSION_SECRET: 'test-secret',
             RP_ID: 'example.com',
             EXPECTED_ORIGINS: 'https://example.com,https://other.example',
           },
