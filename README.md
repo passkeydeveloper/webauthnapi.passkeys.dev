@@ -41,7 +41,14 @@ Each caller passes its relying party configuration to the methods that need it: 
 
 The calling Worker owns its users' sessions. Every ceremony method takes the caller's `sessionId` (1–128 letters, digits, `_` or `-`, e.g. a UUID), which ties the challenge to the browser that started the ceremony. A successful `verifyAuthenticationResponse` returns `{ username, credentialId }` for the caller to log the user in with.
 
-Expected failures, such as invalid input or a response that doesn't verify, are returned as `{ ok: false, error, fieldErrors? }` rather than thrown. Successes are `{ ok: true, value }`.
+Expected failures, such as invalid input or a response that doesn't verify, are returned as `{ ok: false, error, fieldErrors? }` rather than thrown. Successes are `{ ok: true, value }`. Unexpected errors, such as a database outage, are thrown.
+
+Each username can have at most 25 credentials per RP ID, since usernames are shared by anyone who types them.
+
+Callers are responsible for:
+
+- **Rate limiting.** Only the calling Worker sees the end user's IP, so it should limit its own routes that call this API (or rely on a WAF rate limiting rule on its hostname).
+- **Escaping.** Usernames are whatever was typed at registration, and some `error` messages include them. Escape both before rendering them.
 
 | Method | Description |
 | --- | --- |
@@ -55,4 +62,4 @@ Expected failures, such as invalid input or a response that doesn't verify, are 
 
 ## Deploying
 
-The `d1_databases` entry in `wrangler.jsonc` has a placeholder `database_id`; create a database with `wrangler d1 create` before deploying. Credentials are deleted 24 hours after registration if they're never used, or 30 days after the last authentication they were used for, by an hourly cron trigger.
+The `d1_databases` entry in `wrangler.jsonc` has a placeholder `database_id`; create a database with `wrangler d1 create` and apply migrations with `wrangler d1 migrations apply DB --remote` before deploying. Credentials are deleted 24 hours after registration if they're never used, or 30 days after the last authentication they were used for, by an hourly cron trigger.
