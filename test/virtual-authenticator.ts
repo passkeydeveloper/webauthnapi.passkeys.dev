@@ -1,14 +1,15 @@
+import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 import { isoBase64URL, isoCBOR, isoUint8Array } from '@simplewebauthn/server/helpers';
 
 const encoder = new TextEncoder();
 
-function concat(...parts: Uint8Array[]): Uint8Array {
+function concat(...parts: Uint8Array<ArrayBuffer>[]): Uint8Array<ArrayBuffer> {
   return isoUint8Array.concat(parts);
 }
 
 /** WebCrypto emits raw r||s signatures but WebAuthn wants ASN.1 DER */
-function rawToDer(raw: Uint8Array): Uint8Array {
-  const encodeInt = (bytes: Uint8Array) => {
+function rawToDer(raw: Uint8Array<ArrayBuffer>): Uint8Array<ArrayBuffer> {
+  const encodeInt = (bytes: Uint8Array<ArrayBuffer>) => {
     let i = 0;
     while (i < bytes.length - 1 && bytes[i] === 0) i++;
     let int = bytes.slice(i);
@@ -19,7 +20,7 @@ function rawToDer(raw: Uint8Array): Uint8Array {
   return concat(new Uint8Array([0x30, body.length]), body);
 }
 
-async function sha256(data: Uint8Array): Promise<Uint8Array> {
+async function sha256(data: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
   return new Uint8Array(await crypto.subtle.digest('SHA-256', data as BufferSource));
 }
 
@@ -34,7 +35,10 @@ export class VirtualAuthenticator {
     private origin = 'https://example.com',
   ) {}
 
-  async register(options: { challenge: string }, { uv = false, rk = true, synced = false } = {}) {
+  async register(
+    options: { challenge: string },
+    { uv = false, rk = true, synced = false } = {},
+  ): Promise<RegistrationResponseJSON> {
     this.#keyPair = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
       'sign',
       'verify',
@@ -63,9 +67,9 @@ export class VirtualAuthenticator {
     );
 
     const attestationObject = isoCBOR.encode(
-      new Map<string, unknown>([
+      new Map<string, string | Uint8Array | Map<string, never>>([
         ['fmt', 'none'],
-        ['attStmt', new Map()],
+        ['attStmt', new Map<string, never>()],
         ['authData', authData],
       ]),
     );
@@ -84,7 +88,7 @@ export class VirtualAuthenticator {
     };
   }
 
-  async authenticate(options: { challenge: string }, { uv = false } = {}) {
+  async authenticate(options: { challenge: string }, { uv = false } = {}): Promise<AuthenticationResponseJSON> {
     this.counter++;
     const clientData = this.#clientData('webauthn.get', options.challenge);
 

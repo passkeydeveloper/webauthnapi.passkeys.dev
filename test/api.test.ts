@@ -1,7 +1,6 @@
 import { env, exports } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { deleteExpiredCredentials } from '../src/credentials';
-import type WebAuthnApi from '../src/index';
 import type { CreateAuthenticationOptionsInput, CreateRegistrationOptionsInput, Result } from '../src/index';
 import { VirtualAuthenticator } from './virtual-authenticator';
 
@@ -26,7 +25,7 @@ const authenticationRequest: Omit<CreateAuthenticationOptionsInput, 'sessionId'>
   hints: [],
 };
 
-const api = exports.default as unknown as Service<WebAuthnApi>;
+const api = exports.default;
 
 /** Values from a successful result, failing the test otherwise */
 function ok<T>(result: Result<T>): T {

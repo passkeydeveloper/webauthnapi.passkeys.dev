@@ -1,9 +1,5 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { ZodError } from 'zod';
-import type {
-  PublicKeyCredentialCreationOptionsJSON,
-  PublicKeyCredentialRequestOptionsJSON,
-} from '@simplewebauthn/server';
 import { getProviderName } from './aaguids';
 import { supportedAlgorithms, type Algorithm } from './algorithms';
 import { ChallengeStore } from './challenge-store';
@@ -39,6 +35,8 @@ import {
   buildRegistrationOptions,
   verifyAuthentication,
   verifyRegistration,
+  type AuthenticationOptionsJSON,
+  type RegistrationOptionsJSON,
   type StoredAuthenticationOptions,
   type StoredRegistrationOptions,
 } from './webauthn';
@@ -46,6 +44,7 @@ import {
 export { ChallengeStore };
 
 export type * from './schemas';
+export type { AuthenticationOptionsJSON, RegistrationOptionsJSON };
 
 /** An expected failure, such as invalid input or a response that doesn't verify */
 export interface Failure {
@@ -90,7 +89,7 @@ export default class WebAuthnApi extends WorkerEntrypoint<Env> {
     return { algorithms: await supportedAlgorithms() };
   }
 
-  async createRegistrationOptions(input: CreateRegistrationOptionsInput): Promise<Result<PublicKeyCredentialCreationOptionsJSON>> {
+  async createRegistrationOptions(input: CreateRegistrationOptionsInput): Promise<Result<RegistrationOptionsJSON>> {
     const parsed = registrationOptionsRequest.safeParse(input);
     if (!parsed.success) return invalid(parsed.error);
     const req = parsed.data;
@@ -132,7 +131,7 @@ export default class WebAuthnApi extends WorkerEntrypoint<Env> {
   }
 
   /** Omit `username` for conditional UI */
-  async createAuthenticationOptions(input: CreateAuthenticationOptionsInput): Promise<Result<PublicKeyCredentialRequestOptionsJSON>> {
+  async createAuthenticationOptions(input: CreateAuthenticationOptionsInput): Promise<Result<AuthenticationOptionsJSON>> {
     const parsed = authenticationOptionsRequest.safeParse(input);
     if (!parsed.success) return invalid(parsed.error);
     const req = parsed.data;

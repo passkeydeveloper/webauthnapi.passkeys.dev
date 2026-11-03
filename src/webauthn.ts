@@ -31,6 +31,16 @@ export interface ExpectedRelyingParty {
   expectedOrigins: string[];
 }
 
+/**
+ * SimpleWebAuthn's options types allow PRF extension inputs as `BufferSource`, which Workers RPC
+ * types can't serialize, so results containing them would be typed `never` for callers. These
+ * declare only the extensions this API actually sets.
+ */
+export type RegistrationOptionsJSON = Omit<PublicKeyCredentialCreationOptionsJSON, 'extensions'> & {
+  extensions?: { credProps?: boolean };
+};
+export type AuthenticationOptionsJSON = Omit<PublicKeyCredentialRequestOptionsJSON, 'extensions'>;
+
 export interface StoredRegistrationOptions {
   challenge: string;
   requireUserVerification: boolean;
@@ -41,7 +51,7 @@ export interface StoredRegistrationOptions {
 export async function buildRegistrationOptions(
   req: RegistrationOptionsRequest,
   existing: StoredCredential[],
-): Promise<{ options: PublicKeyCredentialCreationOptionsJSON; stored: StoredRegistrationOptions }> {
+): Promise<{ options: RegistrationOptionsJSON; stored: StoredRegistrationOptions }> {
   const supported = await supportedAlgorithms();
   const unsupported = req.algorithms.filter((alg) => !supported.includes(alg));
   if (unsupported.length > 0) {
@@ -141,7 +151,7 @@ export interface StoredAuthenticationOptions {
 export async function buildAuthenticationOptions(
   req: AuthenticationOptionsRequest,
   existing: StoredCredential[],
-): Promise<{ options: PublicKeyCredentialRequestOptionsJSON; stored: StoredAuthenticationOptions }> {
+): Promise<{ options: AuthenticationOptionsJSON; stored: StoredAuthenticationOptions }> {
   const options = await generateAuthenticationOptions({
     rpID: req.rpId,
     timeout: TIMEOUT_MS,
