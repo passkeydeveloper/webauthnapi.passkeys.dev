@@ -6,6 +6,7 @@
   // Only reachable through service bindings from other Workers on the account
   "workers_dev": false,
   "preview_urls": false,
+  "observability": { "enabled": true },
   "durable_objects": {
     "bindings": [{ "name": "CHALLENGES", "class_name": "ChallengeStore" }]
   },
