@@ -32,25 +32,25 @@ Add a binding in the calling Worker's Wrangler config:
 Then call methods on it, typed as `Service<WebAuthnApi>` with the default export of `src/index.ts`:
 
 ```ts
-const result = await env.WEBAUTHN.authenticationOptions({ rpId: 'tools.passkeys.dev', sessionId, userVerification: 'preferred' });
+const result = await env.WEBAUTHN.createAuthenticationOptions({ rpId: 'tools.passkeys.dev', sessionId, userVerification: 'preferred' });
 if (!result.ok) return Response.json(result, { status: 400 });
 return Response.json(result.value);
 ```
 
-Each caller passes its relying party configuration to the methods that need it: `rpId` to all of them, `rpName` to `registrationOptions`, and `expectedOrigins` (exact origins such as `https://tools.passkeys.dev`, which ceremonies may be completed from) to the two verification methods. Credentials are stored per RP ID, so callers with different RP IDs never see each other's credentials.
+Each caller passes its relying party configuration to the methods that need it: `rpId` to all of them, `rpName` to `createRegistrationOptions`, and `expectedOrigins` (exact origins such as `https://tools.passkeys.dev`, which ceremonies may be completed from) to the two verification methods. Credentials are stored per RP ID, so callers with different RP IDs never see each other's credentials.
 
-The calling Worker owns its users' sessions. Every ceremony method takes the caller's `sessionId` (1–128 letters, digits, `_` or `-`, e.g. a UUID), which ties the challenge to the browser that started the ceremony. A successful `authenticationVerification` returns `{ username, credentialId }` for the caller to log the user in with.
+The calling Worker owns its users' sessions. Every ceremony method takes the caller's `sessionId` (1–128 letters, digits, `_` or `-`, e.g. a UUID), which ties the challenge to the browser that started the ceremony. A successful `verifyAuthenticationResponse` returns `{ username, credentialId }` for the caller to log the user in with.
 
 Expected failures, such as invalid input or a response that doesn't verify, are returned as `{ ok: false, error, fieldErrors? }` rather than thrown. Successes are `{ ok: true, value }`.
 
 | Method | Description |
 | --- | --- |
-| `capabilities()` | `{ algorithms }` the runtime can verify (ML-DSA isn't supported by Workers yet) |
-| `registrationOptions({ rpId, rpName, sessionId, username, ... })` | Generate registration options |
-| `registrationVerification({ rpId, expectedOrigins, sessionId, username, response })` | Verify a registration response and store the credential |
-| `authenticationOptions({ rpId, sessionId, username?, ... })` | Generate authentication options (omit `username` for conditional UI) |
-| `authenticationVerification({ rpId, expectedOrigins, sessionId, username?, response })` | Verify an authentication response |
-| `credentials({ rpId, username })` | A user's credentials, with provider name and public key details |
+| `getRuntimeCapabilities()` | `{ algorithms }` the runtime can verify (ML-DSA isn't supported by Workers yet) |
+| `createRegistrationOptions({ rpId, rpName, sessionId, username, ... })` | Generate registration options |
+| `verifyRegistrationResponse({ rpId, expectedOrigins, sessionId, username, response })` | Verify a registration response and store the credential |
+| `createAuthenticationOptions({ rpId, sessionId, username?, ... })` | Generate authentication options (omit `username` for conditional UI) |
+| `verifyAuthenticationResponse({ rpId, expectedOrigins, sessionId, username?, response })` | Verify an authentication response |
+| `getCredentials({ rpId, username })` | A user's credentials, with provider name and public key details |
 | `deleteCredential({ rpId, username, id })` | Delete one of a user's credentials |
 
 ## Deploying

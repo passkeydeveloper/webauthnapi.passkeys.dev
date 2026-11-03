@@ -67,13 +67,13 @@ export type AuthenticationOptionsRequest = z.infer<typeof authenticationOptionsR
 
 // What callers pass over RPC. Responses are typed as what the browser produces, though they're
 // still validated here since they come straight from untrusted clients.
-export type RegistrationOptionsInput = z.input<typeof registrationOptionsRequest>;
-export type RegistrationVerificationInput = Omit<z.input<typeof registrationVerificationRequest>, 'response'> & {
+export type CreateRegistrationOptionsInput = z.input<typeof registrationOptionsRequest>;
+export type VerifyRegistrationResponseInput = Omit<z.input<typeof registrationVerificationRequest>, 'response'> & {
   response: RegistrationResponseJSON;
 };
-export type AuthenticationOptionsInput = z.input<typeof authenticationOptionsRequest>;
-export type AuthenticationVerificationInput = Omit<z.input<typeof authenticationVerificationRequest>, 'response'> & {
+export type CreateAuthenticationOptionsInput = z.input<typeof authenticationOptionsRequest>;
+export type VerifyAuthenticationResponseInput = Omit<z.input<typeof authenticationVerificationRequest>, 'response'> & {
   response: AuthenticationResponseJSON;
 };
-export type CredentialsInput = z.input<typeof credentialsRequest>;
-export type CredentialInput = z.input<typeof credentialRequest>;
+export type GetCredentialsInput = z.input<typeof credentialsRequest>;
+export type DeleteCredentialInput = z.input<typeof credentialRequest>;

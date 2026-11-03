@@ -25,12 +25,12 @@ import {
   credentialsRequest,
   registrationOptionsRequest,
   registrationVerificationRequest,
-  type AuthenticationOptionsInput,
-  type AuthenticationVerificationInput,
-  type CredentialInput,
-  type CredentialsInput,
-  type RegistrationOptionsInput,
-  type RegistrationVerificationInput,
+  type CreateAuthenticationOptionsInput,
+  type CreateRegistrationOptionsInput,
+  type DeleteCredentialInput,
+  type GetCredentialsInput,
+  type VerifyAuthenticationResponseInput,
+  type VerifyRegistrationResponseInput,
 } from './schemas';
 import {
   CHALLENGE_TTL_MS,
@@ -87,11 +87,11 @@ function failed(err: unknown): Failure {
  */
 export default class WebAuthnApi extends WorkerEntrypoint<Env> {
   /** The algorithms this runtime can verify (ML-DSA isn't supported by Workers yet) */
-  async capabilities(): Promise<{ algorithms: Algorithm[] }> {
+  async getRuntimeCapabilities(): Promise<{ algorithms: Algorithm[] }> {
     return { algorithms: await supportedAlgorithms() };
   }
 
-  async registrationOptions(input: RegistrationOptionsInput): Promise<Result<PublicKeyCredentialCreationOptionsJSON>> {
+  async createRegistrationOptions(input: CreateRegistrationOptionsInput): Promise<Result<PublicKeyCredentialCreationOptionsJSON>> {
     const parsed = registrationOptionsRequest.safeParse(input);
     if (!parsed.success) return invalid(parsed.error);
     const req = parsed.data;
@@ -113,7 +113,7 @@ export default class WebAuthnApi extends WorkerEntrypoint<Env> {
     return { ok: true, value: built.options };
   }
 
-  async registrationVerification(input: RegistrationVerificationInput): Promise<Result<{ credentialId: string }>> {
+  async verifyRegistrationResponse(input: VerifyRegistrationResponseInput): Promise<Result<{ credentialId: string }>> {
     const parsed = registrationVerificationRequest.safeParse(input);
     if (!parsed.success) return invalid(parsed.error);
     const req = parsed.data;
@@ -133,7 +133,7 @@ export default class WebAuthnApi extends WorkerEntrypoint<Env> {
   }
 
   /** Omit `username` for conditional UI */
-  async authenticationOptions(input: AuthenticationOptionsInput): Promise<Result<PublicKeyCredentialRequestOptionsJSON>> {
+  async createAuthenticationOptions(input: CreateAuthenticationOptionsInput): Promise<Result<PublicKeyCredentialRequestOptionsJSON>> {
     const parsed = authenticationOptionsRequest.safeParse(input);
     if (!parsed.success) return invalid(parsed.error);
     const req = parsed.data;
@@ -153,8 +153,8 @@ export default class WebAuthnApi extends WorkerEntrypoint<Env> {
     return { ok: true, value: options };
   }
 
-  async authenticationVerification(
-    input: AuthenticationVerificationInput,
+  async verifyAuthenticationResponse(
+    input: VerifyAuthenticationResponseInput,
   ): Promise<Result<{ username: string; credentialId: string }>> {
     const parsed = authenticationVerificationRequest.safeParse(input);
     if (!parsed.success) return invalid(parsed.error);
@@ -184,7 +184,7 @@ export default class WebAuthnApi extends WorkerEntrypoint<Env> {
   }
 
   /** A user's credentials, with provider name and public key details */
-  async credentials(input: CredentialsInput): Promise<Result<CredentialDetails[]>> {
+  async getCredentials(input: GetCredentialsInput): Promise<Result<CredentialDetails[]>> {
     const parsed = credentialsRequest.safeParse(input);
     if (!parsed.success) return invalid(parsed.error);
 
@@ -199,7 +199,7 @@ export default class WebAuthnApi extends WorkerEntrypoint<Env> {
     };
   }
 
-  async deleteCredential(input: CredentialInput): Promise<Result<{ deleted: true }>> {
+  async deleteCredential(input: DeleteCredentialInput): Promise<Result<{ deleted: true }>> {
     const parsed = credentialRequest.safeParse(input);
     if (!parsed.success) return invalid(parsed.error);
 
