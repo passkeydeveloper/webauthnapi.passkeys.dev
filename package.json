@@ -9,7 +9,7 @@
     "deploy": "wrangler deploy",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "types": "wrangler types --include-runtime=false"
+    "types": "wrangler types"
   },
   "dependencies": {
     "@simplewebauthn/server": "^14.0.3",
@@ -17,7 +17,6 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.0.0",
-    "@cloudflare/workers-types": "^5.20261101.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.12",
     "wrangler": "^4.156.0"
